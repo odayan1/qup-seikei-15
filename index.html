@@ -44,6 +44,7 @@ h2{font-size:18px;margin:0 0 8px;color:var(--main)}
 .item .done{margin-left:auto;font-size:12px;color:var(--ok);font-weight:800;flex:none}
 .item.labi{border-color:#d9cdf5;background:#faf7ff}.item.trap{border-color:#ffd1c9;background:#fffaf8}.item.test{border-color:var(--main2);background:var(--soft)}
 .item.kyi{border-color:#cbc4f0;background:var(--kysoft)}.item.kyi .hs{background:#fff;color:var(--ky)}
+.item .hs.part,.item.kyi .hs.part{background:#fff4d6;color:#8a5a00}
 .sec{font-size:12.5px;font-weight:800;color:var(--acc);letter-spacing:.06em;margin-top:20px}
 .sec.ky{color:var(--ky)}
 .secnote{font-size:12px;color:#6b7885;margin-top:2px}
@@ -687,12 +688,23 @@ function record(sec, ok, n) {
   const d = new Date(), pc = Math.round(ok / n * 100);
   h.push({ pc, ok, n, d: `${d.getMonth() + 1}/${d.getDate()}` });
   store.setItem(KEY + "h_" + sec, JSON.stringify(h.slice(-20)));
+  store.removeItem(KEY + "p_" + sec); /* 最後まで解いたので「途中まで」は消す */
   return { prev, best, pc, all: h.slice(-6) };
 }
+/* 2026-11-01 途中までの記録（まっさん指示）：答えるたびに上書き保存。途中でやめても・ページを閉じても残る。最後まで解いたら record() が消す。
+   前回・ベスト（h_）には入れない＝途中の数字でベストや前回比べがずれないように。 */
+const partial = sec => JSON.parse(store.getItem(KEY + "p_" + sec) || "null");
+function savePartial(sec, res, n) {
+  if (!sec || !res.length) return;
+  const d = new Date();
+  store.setItem(KEY + "p_" + sec, JSON.stringify({ ok: res.filter(r => r.ok).length, a: res.length, n, d: `${d.getMonth() + 1}/${d.getDate()}` }));
+}
 function histTag(sec) {
-  const h = hist(sec); if (!h.length) return "";
+  const h = hist(sec), p = partial(sec);
+  const pt = p ? `<span class="hs part">途中まで ${p.a}/${p.n}問（正解${p.ok}）・${p.d}</span>` : "";
+  if (!h.length) return pt;
   const last = h[h.length - 1], best = Math.max(...h.map(x => x.pc));
-  return `<span class="hs">前回 ${last.ok}/${last.n}（${last.pc}%）・ベスト ${best}%・${h.length}回</span>`;
+  return `<span class="hs">前回 ${last.ok}/${last.n}（${last.pc}%）・ベスト ${best}%・${h.length}回</span>${pt ? " " + pt : ""}`;
 }
 function cmpHtml(r) {
   if (!r) return "";
@@ -709,7 +721,7 @@ function cmpHtml(r) {
 /* ===== 確認ダイアログ（解答中にホームへ戻るとき） ===== */
 function closeModal() { const m = document.getElementById("modal"); if (m) m.style.display = "none"; }
 function askHome() {
-  $("#mbox").innerHTML = `<h2>途中でやめますか？</h2><div class="muted">ここまでの答えは記録されません。</div>
+  $("#mbox").innerHTML = `<h2>途中でやめますか？</h2><div class="muted">ここまでの答えは「途中まで」として残るよ。最後まで解くと、前回・ベストの記録になるよ。</div>
     <div class="row2"><button class="btn sub" id="mc">つづける</button><button class="btn main" id="mh">ホームへ</button></div>`;
   $("#modal").style.display = "flex";
   $("#mc").onclick = closeModal; $("#mh").onclick = () => { closeModal(); home(); };
@@ -768,7 +780,7 @@ function chapter(i) {
   const c = CH[i]; let k = 0;
   const show = () => {
     if (k >= c.cards.length) {
-      return quiz(c.qs, { title: `${c.icon} ${i + 1}. ${c.title}`, label: "確認問題", shuffleQ: false,
+      return quiz(c.qs, { title: `${c.icon} ${i + 1}. ${c.title}`, label: "確認問題", shuffleQ: false, sec: c.id,
         done: res => { markDone(c.id); resultScreen(res, { sec: c.id, title: `${c.icon} ${i + 1}. ${c.title}`, chapter: i }); } });
     }
     const cd = c.cards[k];
@@ -818,6 +830,7 @@ function quiz(list, opt) {
     $("#hm").onclick = askHome;
     const finish = (ok, ansText, picked) => {
       res.push({ q, ok, picked }); if (ok) addPts(q.ky ? 20 : 10);
+      savePartial(opt.sec, res, list.length);
       const why = q.k === "st" ? whySt(q) : q.w ? `<div class="why">${q.c.map((c, j) => `<div><span class="no">${NO[j]}</span><span class="${j === q.a ? "okm" : "ngm"}">${j === q.a ? "○" : "×"}</span> ${q.w[j]}</div>`).join("")}</div>` : "";
       $("#fbx").innerHTML = `<div class="fb ${ok ? "ok" : "ng"} pop"><h3>${ok ? `⭕ 正解！ +${q.ky ? 20 : 10}pt` : "❌ ざんねん…"}</h3>
         ${ok ? "" : `<div class="ans">正解：${ansText}</div>`}<div>${q.e}</div>${why}
@@ -891,8 +904,8 @@ function whySt(q) {
 const ansSt = q => q.st.map((s, k) => `${NO[k]}（${s}）なら ${q.a[k].map(j => KANA[j]).join("と")}`).join("／");
 
 /* --- ひっかけ・まとめテスト・共通テスト形式 --- */
-function traps() { quiz(shuffle(TRAPS), { title: "⚠️ ひっかけ ○×", label: "問題", done: res => { markDone("trap"); resultScreen(res, { sec: "trap", title: "⚠️ ひっかけ ○×" }); } }); }
-function test() { quiz(shuffle(ALLQ).slice(0, 15), { title: "📝 まとめテスト", label: "問題", done: res => resultScreen(res, { sec: "test", title: "📝 まとめテスト" }) }); }
+function traps() { quiz(shuffle(TRAPS), { title: "⚠️ ひっかけ ○×", label: "問題", sec: "trap", done: res => { markDone("trap"); resultScreen(res, { sec: "trap", title: "⚠️ ひっかけ ○×" }); } }); }
+function test() { quiz(shuffle(ALLQ).slice(0, 15), { title: "📝 まとめテスト", label: "問題", sec: "test", done: res => resultScreen(res, { sec: "test", title: "📝 まとめテスト" }) }); }
 function kyotsu() {
   screen(`<div class="card pop"><div class="stage" style="color:var(--ky)">🎯 STEP2　共通テストではこう出る</div>
     <h2 style="margin-top:8px">共通テスト形式 ${KY.qs.length}問</h2>
@@ -900,7 +913,7 @@ function kyotsu() {
     <div class="tip"><b class="h">この${KY.qs.length}問の形</b><br>${KY.formats}<br>選択肢は共通テストと同じく①②③④…の番号つき。1問ごとに「共通テストではこう出る」解説が出るよ。</div>
     ${histTag("kyotsu") ? `<div style="margin-top:8px">${histTag("kyotsu")}</div>` : ""}
     <button class="btn ky" id="go">はじめる</button><button class="btn sub" onclick="home()">ホームにもどる</button></div>`);
-  $("#go").onclick = () => quiz(KY.qs, { title: "🎯 共通テスト形式", label: "問", done: res => { markDone("kyotsu"); resultScreen(res, { sec: "kyotsu", title: "🎯 共通テスト形式", ky: true }); } });
+  $("#go").onclick = () => quiz(KY.qs, { title: "🎯 共通テスト形式", label: "問", sec: "kyotsu", done: res => { markDone("kyotsu"); resultScreen(res, { sec: "kyotsu", title: "🎯 共通テスト形式", ky: true }); } });
 }
 function retryWrong(list, opt) {
   quiz(list, { title: opt.title + "（まちがえた問題）", label: "問題", done: res => resultScreen(res, { ...opt, sec: null, retry: true }) });
